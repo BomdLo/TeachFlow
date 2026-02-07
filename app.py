@@ -163,7 +163,7 @@ def generate_wordcloud(text):
 
     # 2. 設定字型路徑 (請根據你的作業系統修改路徑)
     # Mac 範例路徑
-    font_path = "NotoSansTC-Regular.ttf"  # 確保檔案跟 app.py 放一起
+    font_path = "NotoSansTC-VariableFont_wght.ttf"  # 確保檔案跟 app.py 放一起
     # Windows 範例路徑: "C:/Windows/Fonts/msjh.ttc"
 
     # 3. 建立文字雲物件
