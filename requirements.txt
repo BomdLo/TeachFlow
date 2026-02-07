@@ -1,0 +1,8 @@
+streamlit
+pymupdf
+httpx
+opencc-python-reimplemented
+python-docx
+jieba
+wordcloud
+matplotlib
