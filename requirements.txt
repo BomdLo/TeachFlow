@@ -6,3 +6,4 @@ python-docx
 jieba
 wordcloud
 matplotlib
+st-gsheets-connection
