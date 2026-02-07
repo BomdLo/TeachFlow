@@ -265,7 +265,7 @@ def main_app():
     st.divider()
     st.write("### 📢 您的回饋對我們非常重要")
     st.write("為了讓 TeachFlow 更貼近老師的需求，誠摯邀請您填寫 1 分鐘回饋問卷：")
-    st.link_button("👉 填寫使用回饋", "https://你的Google表單網址")
+    st.link_button("👉 填寫使用回饋", "https://forms.gle/p9iJdyMYaZBg9NxMA")
 
 
 if not st.session_state.logged_in:
