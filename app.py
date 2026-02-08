@@ -130,7 +130,7 @@ def login_ui():
         st.subheader("尚未擁有帳號？")
         st.write("請先填寫註冊表單，完成後即可回來登入。")
         # 這裡請換成你的 Google 表單「長網址」
-        st.link_button("👉 前往註冊表單", "https://docs.google.com/forms/d/e/你的表單ID/viewform")
+        st.link_button("👉 前往註冊表單", "https://docs.google.com/forms/d/e/15Y6aVWQ56eCIMgoTb_oFUyeV0llo5v5CK_fKePHOBak/viewform")
 
     with tab1:
         user_input = st.text_input("帳號", placeholder="請輸入註冊時的帳號")
