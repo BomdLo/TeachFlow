@@ -304,24 +304,32 @@ def main_app():
                     processed = re.sub(r'```json|```', '', processed)
                     
                     # --- 寫入 Google Sheets ---
+                    # --- 寫入 Google Sheets (參考 Maxlist 邏輯優化版) ---
                     new_row = pd.DataFrame([{
                         "username": st.session_state.username,
                         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "task_type": task,
                         "result": processed
-                    }])
-                    
-                    # 讀取現有資料並合併 (確保不會覆蓋掉別人的資料)
-                    try:
-                        existing_df = conn_gs.read(worksheet="history", ttl=0)
-                        # 清理空值列避免 concat 報錯
-                        existing_df = existing_df.dropna(how='all')
-                        updated_df = pd.concat([existing_df, new_row], ignore_index=True)
-                        conn_gs.update(worksheet="history", data=updated_df)
-                    except:
-                        # 如果是第一次寫入，直接更新
-                        conn_gs.update(worksheet="history", data=new_row)
+                     }])
 
+try:
+    # 1. 讀取現有資料 (Read)
+    # 這裡如果不指定 worksheet，預設會讀取第一個分頁，所以務必指定 worksheet="history"
+    existing_df = conn_gs.read(worksheet="history", ttl=0)
+    
+    # 2. 清理現有資料 (移除全空行)
+    existing_df = existing_df.dropna(how='all')
+    
+    # 3. 合併新舊資料 (Update)
+    updated_df = pd.concat([existing_df, new_row], ignore_index=True)
+    
+    # 4. 寫回 GSheets
+    # 在 st-gsheets-connection 中，update 會覆蓋整個分頁，所以我們傳入完整合併後的 df
+    conn_gs.update(worksheet="history", data=updated_df)
+    
+except Exception as e:
+    # 如果 history 分頁是完全空的，read 可能會失敗，這時直接寫入第一筆
+    conn_gs.update(worksheet="history", data=new_row)
                     st.session_state.quiz_results = processed
                     st.session_state.display_task = task
                     st.rerun()
