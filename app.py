@@ -34,7 +34,52 @@ def check_hashes(password, hashed_text):
 
 
 cc = OpenCC('s2twp')
+# --- 1. 設計禁止清單：視覺注入 (CSS Injection) ---
+def inject_custom_design():
+    st.markdown("""
+    <style>
+        /* 1. 噪點與非對稱漸變背景 (拒絕純平與紫色) */
+        .stApp {
+            background-color: #f8fafc;
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(226, 232, 240, 0.5) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(203, 213, 225, 0.3) 0px, transparent 50%),
+                url("https://www.transparenttextures.com/patterns/p6.png");
+            background-attachment: fixed;
+        }
 
+        /* 2. 專業文字風格 (拒絕 Emoji 功能圖標) */
+        h1, h2, h3 {
+            font-family: 'Inter', -apple-system, sans-serif;
+            color: #1e293b;
+            letter-spacing: -0.02em;
+        }
+        
+        /* 3. 按鈕動畫 (拒絕 ease-in-out，改用 Spring 回彈) */
+        .stButton>button {
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+            background-color: white;
+            color: #475569;
+            transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .stButton>button:hover {
+            border-color: #94a3b8;
+            color: #1e293b;
+            transform: translateY(-1px);
+        }
+        .stButton>button:active {
+            transform: scale(0.98);
+        }
+
+        /* 4. 移除容器陰影，改用簡潔邊框 */
+        [data-testid="stVerticalBlock"] > div:has(div.stExpander) {
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.7);
+        }
+    </style>
+    """, unsafe_allow_html=True)
 
 
 # --- 2. 初始化 Session State ---
@@ -49,53 +94,35 @@ if "display_task" not in st.session_state:
 
 
 # --- 3. AI 核心邏輯 (優化 Prompt 以確保 4 個選項) ---
-async def run_ai(content, task_type, model_name):
+async def run_ai(content, task_type):
     api_url = "https://api.groq.com/openai/v1/chat/completions"
-    # 在 run_ai 函式中
     api_key = st.secrets["GROQ_API_KEY"]
     groq_model = "llama-3.3-70b-versatile"
 
     if task_type == "生成考題":
+        # 這裡加入了 'explanation' 欄位，回擊「NotebookLM 也能做」的質疑
         prompt = (
             "你是一位台灣資深教師。請根據內容出20題『單選題』。\n"
-            "要求：1.繁體中文 2.嚴格輸出 JSON 陣列 3.每題必須有 4 個選項(A,B,C,D)。\n"
-            "格式：[{\"question\": \"..\", \"options\": [\"..\",\"..\",\"..\",\"..\"], \"answer\": 0}]\n\n"
+            "要求：1.繁體中文 2.嚴格輸出 JSON 陣列 3.每題 4 個選項。\n"
+            "4. 必須包含 'explanation' 欄位，詳述答案理由或課本出處。\n"
+            "格式：[{\"question\": \"..\", \"options\": [\"..\",\"..\",\"..\",\"..\"], \"answer\": 0, \"explanation\": \"..\"}]\n\n"
             f"內容：{content[:4000]}"
         )
     else:
         prompt = f"請用繁體中文針對內容進行{task_type}：\n\n{content[:4000]}"
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json; charset=utf-8"  # 明確指定 UTF-8
-    }
-
     payload = {
         "model": groq_model,
         "messages": [
-            {"role": "system", "content": "你是一個專業的教學助手，請用繁體中文回答。"},
+            {"role": "system", "content": "TECHNICAL_ASSISTANT_V1: 專業教學助理，語氣精簡。"},
             {"role": "user", "content": prompt}
         ],
         "temperature": 0.2
     }
 
     async with httpx.AsyncClient(timeout=60.0) as client:
-        try:
-            # 使用 json 參數會自動幫我們做 UTF-8 編碼
-            response = await client.post(api_url, headers=headers, json=payload)
-            result = response.json()
-
-            if "error" in result:
-                return f"⚠️ Groq API 報錯：{result['error'].get('message', '未知錯誤')}"
-
-            # 取得結果並確保是繁體中文
-            content = result['choices'][0]['message']['content']
-            return content
-
-        except Exception as e:
-            # 如果是編碼錯誤，這裡會抓到並顯示出來
-            return f"❌ 執行錯誤：{str(e)}"
-
+        response = await client.post(api_url, headers={"Authorization": f"Bearer {api_key}"}, json=payload)
+        return response.json()['choices'][0]['message']['content']
 
 # --- 4. Word 匯出邏輯 ---
 def create_docx(quiz_data):
@@ -210,79 +237,110 @@ def generate_wordcloud(text):
     return img_buffer
 
 def main_app():
-    st.title(f"🍎 TeachFlow: {st.session_state.username} 老師的助手")
+    # 注入我們剛才寫的 CSS
+    inject_custom_design()
+    
+    # 1. 標題：去 Emoji，增加工業感
+    st.title("TEACHFLOW_WORKSPACE_V2")
+    st.caption(f"ACTIVE_USER: {st.session_state.username} | STATUS: ONLINE")
 
+    # 2. 側邊欄：僅保留系統級設定與登出
     with st.sidebar:
-        st.header("⚙️ 系統設定")
-        model_name = st.selectbox("選擇模型", ["deepseek-r1:7b", "deepseek-r1:1.5b"])
-        if st.button("登出"):
+        st.markdown("### SYSTEM_CONTROL")
+        model_name = st.selectbox("MODEL_SELECT", ["deepseek-r1:7b", "deepseek-r1:1.5b"])
+        if st.button("LOGOUT_SESSION"):
             st.session_state.logged_in = False
             st.rerun()
 
         st.divider()
-        st.header("📜 歷史紀錄")
+        st.markdown("### DATA_HISTORY")
+        # 這裡保留你原本的資料庫讀取邏輯
         conn = sqlite3.connect('teachflow.db')
         c = conn.cursor()
-        c.execute(
-            'SELECT id, timestamp, task_type, result FROM history WHERE username=? ORDER BY timestamp DESC LIMIT 5',
-            (st.session_state.username,))
+        c.execute('SELECT id, timestamp, task_type, result FROM history WHERE username=? ORDER BY timestamp DESC LIMIT 5', (st.session_state.username,))
         records = c.fetchall()
         for r in records:
-            if st.button(f"📅 {r[1][5:16]} | {r[2]}", key=f"hist_{r[0]}"):
+            if st.button(f"REC_{r[1][5:16]}", key=f"hist_{r[0]}", use_container_width=True):
                 st.session_state.quiz_results = r[3]
                 st.session_state.display_task = r[2]
                 st.rerun()
 
-    uploaded_file = st.file_uploader("上傳教材 PDF", type="pdf")
+    # 3. 主畫面：非對稱佈局 [1 : 2.5]
+    col_meta, col_workspace = st.columns([1, 2.5], gap="large")
 
-    if uploaded_file:
-        doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
-        full_text = "".join([page.get_text() for page in doc])
-        st.write(f"📄 字數：{len(full_text)}")
-        task = st.radio("任務：", ["重點摘要", "生成考題", "教學策略建議"])
-        # --- 在 Streamlit 介面中的呼叫方式 ---
-        if st.button("📊 生成教材關鍵字雲"):
-            with st.spinner("正在分析關鍵字並繪圖中..."):
-                # 假設 full_text 是你解析 PDF 得到的全文
-                cloud_img = generate_wordcloud(full_text)
-                st.image(cloud_img, caption="教材核心關鍵字視覺化")
+    # --- 左側：輸入端 (Input Meta) ---
+    with col_meta:
+        st.markdown("### 01_SOURCE_UPLOAD")
+        uploaded_file = st.file_uploader("UPLOAD_PDF_DOCUMENT", type="pdf", label_visibility="collapsed")
+        
+        if uploaded_file:
+            doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
+            full_text = "".join([page.get_text() for page in doc])
+            st.code(f"METRICS: {len(full_text)} CHARS", language="bash")
+            
+            st.markdown("### 02_TASK_CONFIGURATION")
+            task = st.radio("SELECT_OPERATION", ["重點摘要", "生成考題", "教學策略建議"], label_visibility="collapsed")
+            
+            # 功能按鈕：去掉 Emoji，改用純文字與邊框感
+            if st.button("EXECUTE_AI_ANALYSIS", use_container_width=True):
+                with st.spinner("AI_THINKING..."):
+                    raw = asyncio.run(run_ai(full_text, task, model_name))
+                    processed = cc.convert(raw).replace("後-end", "後端")
+                    processed = re.sub(r'<think>.*?</think>', '', processed, flags=re.DOTALL)
+                    processed = re.sub(r'```json|```', '', processed)
+                    
+                    # 存入資料庫 (維持你原有的邏輯)
+                    conn = sqlite3.connect('teachflow.db')
+                    c = conn.cursor()
+                    c.execute('INSERT INTO history (username, task_type, result) VALUES (?,?,?)', (st.session_state.username, task, processed))
+                    conn.commit()
+                    conn.close()
 
-        if st.button("🚀 執行 AI 分析"):
-            with st.spinner("思考中..."):
-                raw = asyncio.run(run_ai(full_text, task, model_name))
-                # 清洗與轉換
-                processed = cc.convert(raw).replace("後-end", "後端")
-                processed = re.sub(r'<think>.*?</think>', '', processed, flags=re.DOTALL)
-                processed = re.sub(r'```json|```', '', processed)
+                    st.session_state.quiz_results = processed
+                    st.session_state.display_task = task
+                    st.rerun()
 
-                # 存入資料庫
-                conn = sqlite3.connect('teachflow.db')
-                c = conn.cursor()
-                c.execute('INSERT INTO history (username, task_type, result) VALUES (?,?,?)',
-                          (st.session_state.username, task, processed))
-                conn.commit()
-                conn.close()
+            if st.button("GENERATE_WORD_CLOUD", use_container_width=True):
+                with st.spinner("ANALYZING_KEYWORDS..."):
+                    cloud_img = generate_wordcloud(full_text)
+                    st.session_state.current_cloud = cloud_img
 
-                st.session_state.quiz_results = processed
-                st.session_state.display_task = task
-                st.rerun()
+    # --- 右側：輸出端 (Workspace) ---
+    with col_workspace:
+        # 如果有文字雲，優先顯示在右側頂部
+        if "current_cloud" in st.session_state:
+            st.image(st.session_state.current_cloud, use_container_width=True)
 
-    if st.session_state.quiz_results:
-        res = st.session_state.quiz_results
-        if st.session_state.display_task == "生成考題":
-            json_match = re.search(r'\[.*\]', res, re.DOTALL)
-            if json_match:
-                quiz_data = json.loads(json_match.group())
-                for i, q in enumerate(quiz_data):
-                    with st.container(border=True):
-                        st.write(f"**Q{i + 1}: {q['question']}**")
-                        ans = st.radio(f"選項", q['options'], key=f"q_{i}_{hash(res)}")
-                        st.success(f"正確答案：{q['options'][q.get('answer', 0)]}")
-                st.download_button("📥 下載 Word", create_docx(quiz_data), "exam.docx")
+        if st.session_state.quiz_results:
+            st.markdown(f"### 03_OUTPUT: {st.session_state.display_task}")
+            res = st.session_state.quiz_results
+            
+            if st.session_state.display_task == "生成考題":
+                json_match = re.search(r'\[.*\]', res, re.DOTALL)
+                if json_match:
+                    quiz_data = json.loads(json_match.group())
+                    
+                    # 考題顯示優化：不再使用大塊 success 顏色，改用簡潔卡片
+                    for i, q in enumerate(quiz_data):
+                        with st.container(border=True):
+                            st.markdown(f"**Q{i + 1}: {q['question']}**")
+                            # 非居中對齊的選項
+                            st.radio("OPTIONS", q['options'], key=f"q_{i}_{hash(res)}", label_visibility="collapsed")
+                            # 將解釋與答案收納，保持介面冷靜
+                            with st.expander("VIEW_ANSWER_AND_LOGIC"):
+                                st.markdown(f"**CORRECT_ANSWER:** {q['options'][q.get('answer', 0)]}")
+                                if 'explanation' in q:
+                                    st.caption(f"EXPLANATION: {q['explanation']}")
+                    
+                    st.download_button("EXPORT_AS_WORD", create_docx(quiz_data), "exam.docx", use_container_width=True)
+                else:
+                    st.text_area("RAW_OUTPUT", res, height=400)
             else:
-                st.write(res)
+                # 摘要或建議的顯示
+                st.markdown(res)
         else:
-            st.info(res)
+            # 空狀態顯示 (Empty State)
+            st.info("AWAITING_INPUT: 請在左側上傳檔案並選擇任務以開始分析。")
     st.divider()
     st.write("### 📢 您的回饋對我們非常重要")
     st.write("為了讓 TeachFlow 更貼近老師的需求，誠摯邀請您填寫 1 分鐘回饋問卷：")
