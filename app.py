@@ -243,26 +243,13 @@ def main_app():
     # 注入視覺設計
     inject_custom_design()
     
-    # --- 資料庫初始化與自動修復 ---
-    conn = sqlite3.connect('teachflow.db')
-    c = conn.cursor()
-    # 自動建立表格，避免 OperationalError
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            task_type TEXT,
-            result TEXT
-        )
-    ''')
-    conn.commit()
-    # -----------------------------
+    # 建立連線 (確保使用同一個 conn_gs)
+    conn_gs = st.connection("gsheets", type=GSheetsConnection)
 
     st.title("TEACHFLOW_WORKSPACE_V2")
     st.caption(f"ACTIVE_USER: {st.session_state.username} | STATUS: ONLINE")
 
-    # 2. 側邊欄
+    # --- 1. 側邊欄：從 GSheets 讀取紀錄 ---
     with st.sidebar:
         st.markdown("### SYSTEM_CONTROL")
         model_name = st.selectbox("MODEL_SELECT", ["deepseek-r1:7b", "deepseek-r1:1.5b"])
@@ -272,21 +259,34 @@ def main_app():
 
         st.divider()
         st.markdown("### DATA_HISTORY")
-        # 讀取最近 5 筆紀錄
-        c.execute('SELECT id, timestamp, task_type, result FROM history WHERE username=? ORDER BY timestamp DESC LIMIT 5', (st.session_state.username,))
-        records = c.fetchall()
-        for r in records:
-            if st.button(f"REC_{r[1][5:16]}", key=f"hist_{r[0]}", use_container_width=True):
-                st.session_state.quiz_results = r[3]
-                st.session_state.display_task = r[2]
-                st.rerun()
+        
+        try:
+            # 讀取 history 分頁 (ttl=0 確保抓到剛生成的資料)
+            df_hist = conn_gs.read(worksheet="history", ttl=0)
+            
+            if not df_hist.empty:
+                # 篩選當前使用者的紀錄，取最後 5 筆並反轉（讓最新的在上面）
+                user_hist = df_hist[df_hist['username'].astype(str) == str(st.session_state.username)]
+                user_hist = user_hist.tail(5).iloc[::-1]
+                
+                for index, row in user_hist.iterrows():
+                    # 顯示時間與任務類型，移除 Emoji
+                    time_label = str(row['timestamp'])[5:16]
+                    if st.button(f"REC_{time_label} | {row['task_type']}", key=f"hist_{index}", use_container_width=True):
+                        st.session_state.quiz_results = row['result']
+                        st.session_state.display_task = row['task_type']
+                        st.rerun()
+            else:
+                st.caption("NO_RECORDS_AVAILABLE")
+        except Exception as e:
+            st.caption("DATABASE_SYNC_PENDING")
 
-    # 3. 主畫面佈局
+    # --- 2. 主畫面佈局 ---
     col_meta, col_workspace = st.columns([1, 2.5], gap="large")
 
     with col_meta:
         st.markdown("### 01_SOURCE_UPLOAD")
-        uploaded_file = st.file_uploader("UPLOAD_PDF_DOCUMENT", type="pdf", label_visibility="collapsed")
+        uploaded_file = st.file_uploader("UPLOAD_PDF", type="pdf", label_visibility="collapsed")
         
         if uploaded_file:
             doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
@@ -298,21 +298,36 @@ def main_app():
             
             if st.button("EXECUTE_AI_ANALYSIS", use_container_width=True):
                 with st.spinner("AI_THINKING..."):
-                    raw = asyncio.run(run_ai(full_text, task)) # 呼叫非同步 AI
+                    raw = asyncio.run(run_ai(full_text, task))
                     processed = cc.convert(raw).replace("後-end", "後端")
                     processed = re.sub(r'<think>.*?</think>', '', processed, flags=re.DOTALL)
                     processed = re.sub(r'```json|```', '', processed)
                     
-                    # 存入紀錄
-                    c.execute('INSERT INTO history (username, task_type, result) VALUES (?,?,?)', (st.session_state.username, task, processed))
-                    conn.commit()
+                    # --- 寫入 Google Sheets ---
+                    new_row = pd.DataFrame([{
+                        "username": st.session_state.username,
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "task_type": task,
+                        "result": processed
+                    }])
+                    
+                    # 讀取現有資料並合併 (確保不會覆蓋掉別人的資料)
+                    try:
+                        existing_df = conn_gs.read(worksheet="history", ttl=0)
+                        # 清理空值列避免 concat 報錯
+                        existing_df = existing_df.dropna(how='all')
+                        updated_df = pd.concat([existing_df, new_row], ignore_index=True)
+                        conn_gs.update(worksheet="history", data=updated_df)
+                    except:
+                        # 如果是第一次寫入，直接更新
+                        conn_gs.update(worksheet="history", data=new_row)
 
                     st.session_state.quiz_results = processed
                     st.session_state.display_task = task
                     st.rerun()
 
             if st.button("GENERATE_WORD_CLOUD", use_container_width=True):
-                with st.spinner("ANALYZING_KEYWORDS..."):
+                with st.spinner("ANALYZING..."):
                     cloud_img = generate_wordcloud(full_text)
                     st.session_state.current_cloud = cloud_img
 
@@ -332,23 +347,22 @@ def main_app():
                         with st.container(border=True):
                             st.markdown(f"**Q{i + 1}: {q['question']}**")
                             st.radio("OPTIONS", q['options'], key=f"q_{i}_{hash(res)}", label_visibility="collapsed")
-                            with st.expander("VIEW_ANSWER_AND_LOGIC"):
-                                st.markdown(f"**CORRECT_ANSWER:** {q['options'][q.get('answer', 0)]}")
+                            with st.expander("VIEW_LOGIC"):
+                                st.markdown(f"**CORRECT:** {q['options'][q.get('answer', 0)]}")
                                 if 'explanation' in q:
-                                    st.caption(f"EXPLANATION: {q['explanation']}")
+                                    st.caption(f"LOGIC: {q['explanation']}")
                     
-                    st.download_button("EXPORT_AS_WORD", create_docx(quiz_data), "exam.docx", use_container_width=True)
+                    st.download_button("DOWNLOAD_DOCX", create_docx(quiz_data), "exam.docx", use_container_width=True)
                 else:
                     st.text_area("RAW_OUTPUT", res, height=400)
             else:
                 st.markdown(res)
         else:
-            st.info("AWAITING_INPUT: 請在左側上傳檔案並選擇任務以開始分析。")
-    
-    # 關閉連線
-    conn.close()
+            st.info("AWAITING_INPUT: 請上傳檔案並執行 AI 分析。")
+
     st.divider()
-    
+    st.caption("USER_FEEDBACK_REQUIRED")
+    st.link_button("SUBMIT_FEEDBACK", "https://forms.gle/p9iJdyMYaZBg9NxMA")
 
 
 if not st.session_state.logged_in:
