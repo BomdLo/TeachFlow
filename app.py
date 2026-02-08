@@ -119,7 +119,7 @@ st.set_page_config(page_title="TeachFlow AI", layout="wide")
 
 
 def login_ui():
-    st.image("你的Logo網址或截圖", width=200) # 讓頁面看起來像個品牌
+    
     st.title("🍎 TeachFlow AI 教學助手")
     st.info("這是專為台灣教師設計的 AI 助手，支援 PDF 轉考題、重點摘要與關鍵字雲分析。")
     
