@@ -243,7 +243,7 @@ def main_app():
     # 注入視覺設計
     inject_custom_design()
     
-    # 建立連線 (確保使用同一個 conn_gs)
+    # 建立連線
     conn_gs = st.connection("gsheets", type=GSheetsConnection)
 
     st.title("TEACHFLOW_WORKSPACE_V2")
@@ -252,7 +252,7 @@ def main_app():
     # --- 1. 側邊欄：從 GSheets 讀取紀錄 ---
     with st.sidebar:
         st.markdown("### SYSTEM_CONTROL")
-        model_name = st.selectbox("MODEL_SELECT", ["deepseek-r1:7b", "deepseek-r1:1.5b"])
+        model_name = st.selectbox("MODEL_SELECT", ["llama-3.3-70b", "deepseek-r1:7b"])
         if st.button("LOGOUT_SESSION"):
             st.session_state.logged_in = False
             st.rerun()
@@ -261,16 +261,12 @@ def main_app():
         st.markdown("### DATA_HISTORY")
         
         try:
-            # 讀取 history 分頁 (ttl=0 確保抓到剛生成的資料)
             df_hist = conn_gs.read(worksheet="history", ttl=0)
-            
             if not df_hist.empty:
-                # 篩選當前使用者的紀錄，取最後 5 筆並反轉（讓最新的在上面）
                 user_hist = df_hist[df_hist['username'].astype(str) == str(st.session_state.username)]
                 user_hist = user_hist.tail(5).iloc[::-1]
                 
                 for index, row in user_hist.iterrows():
-                    # 顯示時間與任務類型，移除 Emoji
                     time_label = str(row['timestamp'])[5:16]
                     if st.button(f"REC_{time_label} | {row['task_type']}", key=f"hist_{index}", use_container_width=True):
                         st.session_state.quiz_results = row['result']
@@ -303,33 +299,24 @@ def main_app():
                     processed = re.sub(r'<think>.*?</think>', '', processed, flags=re.DOTALL)
                     processed = re.sub(r'```json|```', '', processed)
                     
-                    # --- 寫入 Google Sheets ---
-                    # --- 寫入 Google Sheets (參考 Maxlist 邏輯優化版) ---
+                    # --- 寫入 Google Sheets 邏輯 ---
                     new_row = pd.DataFrame([{
                         "username": st.session_state.username,
                         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "task_type": task,
                         "result": processed
-                     }])
+                    }])
 
-try:
-    # 1. 讀取現有資料 (Read)
-    # 這裡如果不指定 worksheet，預設會讀取第一個分頁，所以務必指定 worksheet="history"
-    existing_df = conn_gs.read(worksheet="history", ttl=0)
-    
-    # 2. 清理現有資料 (移除全空行)
-    existing_df = existing_df.dropna(how='all')
-    
-    # 3. 合併新舊資料 (Update)
-    updated_df = pd.concat([existing_df, new_row], ignore_index=True)
-    
-    # 4. 寫回 GSheets
-    # 在 st-gsheets-connection 中，update 會覆蓋整個分頁，所以我們傳入完整合併後的 df
-    conn_gs.update(worksheet="history", data=updated_df)
-    
-except Exception as e:
-    # 如果 history 分頁是完全空的，read 可能會失敗，這時直接寫入第一筆
-    conn_gs.update(worksheet="history", data=new_row)
+                    try:
+                        # 讀取並合併
+                        existing_df = conn_gs.read(worksheet="history", ttl=0)
+                        existing_df = existing_df.dropna(how='all')
+                        updated_df = pd.concat([existing_df, new_row], ignore_index=True)
+                        conn_gs.update(worksheet="history", data=updated_df)
+                    except Exception as e:
+                        # 若讀取失敗（例如分頁不存在或全空），嘗試直接寫入
+                        conn_gs.update(worksheet="history", data=new_row)
+
                     st.session_state.quiz_results = processed
                     st.session_state.display_task = task
                     st.rerun()
@@ -371,6 +358,7 @@ except Exception as e:
     st.divider()
     st.caption("USER_FEEDBACK_REQUIRED")
     st.link_button("SUBMIT_FEEDBACK", "https://forms.gle/p9iJdyMYaZBg9NxMA")
+
 
 
 if not st.session_state.logged_in:
