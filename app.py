@@ -17,6 +17,7 @@ import io
 import sys
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
+from datetime import datetime
 # 建立連線
 conn = st.connection("gsheets", type=GSheetsConnection)
 
