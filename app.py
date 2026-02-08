@@ -146,61 +146,64 @@ st.set_page_config(page_title="TeachFlow AI", layout="wide")
 
 
 def login_ui():
+    # 1. 注入全域 CSS
+    inject_custom_design()
     
-    st.title("🍎 TeachFlow AI 教學助手")
-    st.info("這是專為台灣教師設計的 AI 助手，支援 PDF 轉考題、重點摘要與關鍵字雲分析。")
+    # 2. 置中容器美化 (雖然禁止完美居中，但登入框通常需要收納感，我們讓它偏上)
+    st.markdown("<br><br>", unsafe_allow_html=True)
     
-    st.title("🔐 TeachFlow 登入系統")
+    # 標題去 Emoji，改用系統標籤感
+    st.title("TEACHFLOW_AUTH_GATEWAY")
+    st.caption("VERSION: 2.1.0_STABLE | REGION: TW_EDU")
+    
+    # 頂部提示資訊
+    st.info("SYSTEM_INFO: 支援 PDF 考題解析、教材摘要與關鍵字矩陣分析。")
     
     # 建立連線
     conn_gs = st.connection("gsheets", type=GSheetsConnection)
     
-    tab1, tab2 = st.tabs(["帳號登入", "快速註冊"])
+    # 使用 Tabs，但標籤名改為純文字大寫
+    tab1, tab2 = st.tabs(["SIGN_IN", "REGISTRATION"])
 
     with tab2:
-        st.subheader("尚未擁有帳號？")
-        st.write("請先填寫註冊表單，完成後即可回來登入。")
-        # 這裡請換成你的 Google 表單「長網址」
-        st.link_button("👉 前往註冊表單", "https://docs.google.com/forms/d/e/1FAIpQLSdVXraSEhAp_rAuXyx5_PjtJTyBt9iut013SeSF_ndmgW0ALQ/viewform")
+        st.markdown("### ACCOUNT_REGISTRATION")
+        st.write("請先完成註冊表單，系統將於填寫後同步權限。")
+        # 移除 👉 圖示
+        st.link_button("OPEN_REGISTRATION_FORM", "https://docs.google.com/forms/d/e/1FAIpQLSdVXraSEhAp_rAuXyx5_PjtJTyBt9iut013SeSF_ndmgW0ALQ/viewform", use_container_width=True)
 
     with tab1:
-        user_input = st.text_input("帳號", placeholder="請輸入註冊時的帳號")
-        pass_input = st.text_input("密碼", type='password', placeholder="請輸入密碼")
-        
-        if st.button("確認登入"):
-            if user_input and pass_input:
-                try:
-                    # 讀取試算表，ttl=0 代表不使用暫存，即時抓取最新資料
-                    df = conn_gs.read(ttl=0)
-                    
-                    # 清理資料：移除欄位名稱前後可能存在的空格
-                    df.columns = [c.strip() for c in df.columns]
-                    
-                    # 搜尋帳號 (轉換為字串並移除前後空格再比對)
-                    # 假設你的欄位名稱叫 '帳號'
-                    user_data = df[df['帳號'].astype(str).str.strip() == str(user_input).strip()]
-                    
-                    if not user_data.empty:
-                        # 取得該帳號最後一次填寫的密碼 (iloc[-1])
-                        # 假設你的欄位名稱叫 '密碼'
-                        correct_password = user_data.iloc[-1]['密碼']
+        # 使用容器包裝輸入框，增加視覺層次
+        with st.container(border=True):
+            user_input = st.text_input("ID_ACCOUNT", placeholder="輸入註冊帳號")
+            pass_input = st.text_input("ACCESS_PASSWORD", type='password', placeholder="輸入安全密碼")
+            
+            # 按鈕文字改為大寫
+            if st.button("VERIFY_AND_LOGIN", use_container_width=True):
+                if user_input and pass_input:
+                    try:
+                        # 讀取試算表
+                        df = conn_gs.read(ttl=0)
+                        df.columns = [c.strip() for c in df.columns]
                         
-                        if str(correct_password).strip() == str(pass_input).strip():
-                            st.session_state.logged_in = True
-                            st.session_state.username = user_input
-                            st.success("驗證成功，進入系統中...")
-                            st.rerun()
+                        user_data = df[df['帳號'].astype(str).str.strip() == str(user_input).strip()]
+                        
+                        if not user_data.empty:
+                            correct_password = user_data.iloc[-1]['密碼']
+                            
+                            if str(correct_password).strip() == str(pass_input).strip():
+                                st.session_state.logged_in = True
+                                st.session_state.username = user_input
+                                st.success("AUTH_SUCCESS: 正在載入工作站...")
+                                st.rerun()
+                            else:
+                                st.error("AUTH_ERROR: 密碼不匹配")
                         else:
-                            st.error("密碼不正確，請再試一次")
-                    else:
-                        st.error("找不到此帳號，請確認是否已完成註冊表單")
-                        
-                except Exception as e:
-                    st.error("登入系統暫時無法連線")
-                    # 如果一直登入失敗，可以暫時取消下面這行的註解來除錯
-                    # st.write("請檢查欄位名稱是否正確：", df.columns.tolist())
-            else:
-                st.warning("請完整填寫帳號與密碼")
+                            st.error("AUTH_ERROR: 找不到使用者紀錄")
+                            
+                    except Exception as e:
+                        st.error("SYSTEM_ERROR: 無法存取驗證伺服器")
+                else:
+                    st.warning("FIELD_REQUIRED: 請填寫所有必填欄位")
 
 # --- 關鍵字雲生成邏輯 ---
 def generate_wordcloud(text):
@@ -345,9 +348,7 @@ def main_app():
     # 關閉連線
     conn.close()
     st.divider()
-    st.write("### 📢 您的回饋對我們非常重要")
-    st.write("為了讓 TeachFlow 更貼近老師的需求，誠摯邀請您填寫 1 分鐘回饋問卷：")
-    st.link_button("👉 填寫使用回饋", "https://forms.gle/p9iJdyMYaZBg9NxMA")
+    
 
 
 if not st.session_state.logged_in:
