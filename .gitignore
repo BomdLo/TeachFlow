@@ -1,0 +1,4 @@
+teachflow.db
+.streamlit/
+__pycache__/
+*.ttf
