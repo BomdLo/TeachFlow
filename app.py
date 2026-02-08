@@ -16,6 +16,7 @@ from io import BytesIO
 import io
 import sys
 from streamlit_gsheets import GSheetsConnection
+import pandas as pd
 # 建立連線
 conn = st.connection("gsheets", type=GSheetsConnection)
 
