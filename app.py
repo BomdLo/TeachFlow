@@ -237,14 +237,29 @@ def generate_wordcloud(text):
     return img_buffer
 
 def main_app():
-    # 注入我們剛才寫的 CSS
+    # 注入視覺設計
     inject_custom_design()
     
-    # 1. 標題：去 Emoji，增加工業感
+    # --- 資料庫初始化與自動修復 ---
+    conn = sqlite3.connect('teachflow.db')
+    c = conn.cursor()
+    # 自動建立表格，避免 OperationalError
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            task_type TEXT,
+            result TEXT
+        )
+    ''')
+    conn.commit()
+    # -----------------------------
+
     st.title("TEACHFLOW_WORKSPACE_V2")
     st.caption(f"ACTIVE_USER: {st.session_state.username} | STATUS: ONLINE")
 
-    # 2. 側邊欄：僅保留系統級設定與登出
+    # 2. 側邊欄
     with st.sidebar:
         st.markdown("### SYSTEM_CONTROL")
         model_name = st.selectbox("MODEL_SELECT", ["deepseek-r1:7b", "deepseek-r1:1.5b"])
@@ -254,9 +269,7 @@ def main_app():
 
         st.divider()
         st.markdown("### DATA_HISTORY")
-        # 這裡保留你原本的資料庫讀取邏輯
-        conn = sqlite3.connect('teachflow.db')
-        c = conn.cursor()
+        # 讀取最近 5 筆紀錄
         c.execute('SELECT id, timestamp, task_type, result FROM history WHERE username=? ORDER BY timestamp DESC LIMIT 5', (st.session_state.username,))
         records = c.fetchall()
         for r in records:
@@ -265,10 +278,9 @@ def main_app():
                 st.session_state.display_task = r[2]
                 st.rerun()
 
-    # 3. 主畫面：非對稱佈局 [1 : 2.5]
+    # 3. 主畫面佈局
     col_meta, col_workspace = st.columns([1, 2.5], gap="large")
 
-    # --- 左側：輸入端 (Input Meta) ---
     with col_meta:
         st.markdown("### 01_SOURCE_UPLOAD")
         uploaded_file = st.file_uploader("UPLOAD_PDF_DOCUMENT", type="pdf", label_visibility="collapsed")
@@ -281,20 +293,16 @@ def main_app():
             st.markdown("### 02_TASK_CONFIGURATION")
             task = st.radio("SELECT_OPERATION", ["重點摘要", "生成考題", "教學策略建議"], label_visibility="collapsed")
             
-            # 功能按鈕：去掉 Emoji，改用純文字與邊框感
             if st.button("EXECUTE_AI_ANALYSIS", use_container_width=True):
                 with st.spinner("AI_THINKING..."):
-                    raw = asyncio.run(run_ai(full_text, task, model_name))
+                    raw = asyncio.run(run_ai(full_text, task)) # 呼叫非同步 AI
                     processed = cc.convert(raw).replace("後-end", "後端")
                     processed = re.sub(r'<think>.*?</think>', '', processed, flags=re.DOTALL)
                     processed = re.sub(r'```json|```', '', processed)
                     
-                    # 存入資料庫 (維持你原有的邏輯)
-                    conn = sqlite3.connect('teachflow.db')
-                    c = conn.cursor()
+                    # 存入紀錄
                     c.execute('INSERT INTO history (username, task_type, result) VALUES (?,?,?)', (st.session_state.username, task, processed))
                     conn.commit()
-                    conn.close()
 
                     st.session_state.quiz_results = processed
                     st.session_state.display_task = task
@@ -305,9 +313,7 @@ def main_app():
                     cloud_img = generate_wordcloud(full_text)
                     st.session_state.current_cloud = cloud_img
 
-    # --- 右側：輸出端 (Workspace) ---
     with col_workspace:
-        # 如果有文字雲，優先顯示在右側頂部
         if "current_cloud" in st.session_state:
             st.image(st.session_state.current_cloud, use_container_width=True)
 
@@ -319,14 +325,10 @@ def main_app():
                 json_match = re.search(r'\[.*\]', res, re.DOTALL)
                 if json_match:
                     quiz_data = json.loads(json_match.group())
-                    
-                    # 考題顯示優化：不再使用大塊 success 顏色，改用簡潔卡片
                     for i, q in enumerate(quiz_data):
                         with st.container(border=True):
                             st.markdown(f"**Q{i + 1}: {q['question']}**")
-                            # 非居中對齊的選項
                             st.radio("OPTIONS", q['options'], key=f"q_{i}_{hash(res)}", label_visibility="collapsed")
-                            # 將解釋與答案收納，保持介面冷靜
                             with st.expander("VIEW_ANSWER_AND_LOGIC"):
                                 st.markdown(f"**CORRECT_ANSWER:** {q['options'][q.get('answer', 0)]}")
                                 if 'explanation' in q:
@@ -336,11 +338,12 @@ def main_app():
                 else:
                     st.text_area("RAW_OUTPUT", res, height=400)
             else:
-                # 摘要或建議的顯示
                 st.markdown(res)
         else:
-            # 空狀態顯示 (Empty State)
             st.info("AWAITING_INPUT: 請在左側上傳檔案並選擇任務以開始分析。")
+    
+    # 關閉連線
+    conn.close()
     st.divider()
     st.write("### 📢 您的回饋對我們非常重要")
     st.write("為了讓 TeachFlow 更貼近老師的需求，誠摯邀請您填寫 1 分鐘回饋問卷：")
