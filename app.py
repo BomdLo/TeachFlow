@@ -300,23 +300,31 @@ def main_app():
                     processed = re.sub(r'```json|```', '', processed)
                     
                     # --- 寫入 Google Sheets 邏輯 ---
+                    # --- 寫入 Google Sheets 核心修正 ---
                     new_row = pd.DataFrame([{
                         "username": st.session_state.username,
                         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "task_type": task,
                         "result": processed
                     }])
-
+                    
                     try:
-                        # 讀取並合併
+                        # 嘗試讀取
                         existing_df = conn_gs.read(worksheet="history", ttl=0)
-                        existing_df = existing_df.dropna(how='all')
-                        updated_df = pd.concat([existing_df, new_row], ignore_index=True)
-                        conn_gs.update(worksheet="history", data=updated_df)
+                        
+                        # 如果讀取成功（代表分頁存在）
+                        if existing_df is not None:
+                            existing_df = existing_df.dropna(how='all')
+                            updated_df = pd.concat([existing_df, new_row], ignore_index=True)
+                            conn_gs.update(worksheet="history", data=updated_df)
+                            st.toast("✅ 紀錄已同步至雲端")
+                        
                     except Exception as e:
-                        # 若讀取失敗（例如分頁不存在或全空），嘗試直接寫入
-                        conn_gs.update(worksheet="history", data=new_row)
-
+                        # 捕捉到錯誤（通常是 WorksheetNotFound）
+                        st.error("⚠️ 雲端同步失敗：找不到名為 'history' 的分頁")
+                        st.info("💡 請至 Google Sheet 左下角點擊「+」新增一個分頁，並重新命名為 history")
+    
+   
                     st.session_state.quiz_results = processed
                     st.session_state.display_task = task
                     st.rerun()
