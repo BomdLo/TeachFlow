@@ -120,54 +120,52 @@ st.set_page_config(page_title="TeachFlow AI", layout="wide")
 
 def login_ui():
     st.title("🔐 TeachFlow 登入系統")
-    choice = st.sidebar.selectbox("選單", ["登入", "註冊"])
-    user = st.text_input("帳號")
-    passwd = st.text_input("密碼", type='password')
-
-    # 建立連線
+    
+    # 建立與 Google Sheets 的連線
     conn_gs = st.connection("gsheets", type=GSheetsConnection)
+    
+    tab1, tab2 = st.tabs(["帳號登入", "快速註冊"])
 
-    if choice == "註冊":
-        if st.button("創建帳號"):
-            if user and passwd:
-                # 讀取現有用戶資料 (ttl=0 確保讀取最新)
-                df = conn_gs.read(ttl=0)
-                
-                # 檢查帳號是否已存在
-                if user in df['username'].values.astype(str):
-                    st.error("帳號已存在，請更換帳號名稱")
-                else:
-                    # 新增用戶資料
-                    new_user = pd.DataFrame([{
-                        "username": str(user),
-                        "password": make_hashes(passwd),
-                        "signup_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    }])
+    with tab2:
+        st.subheader("尚未擁有帳號？")
+        st.write("為了確保系統穩定，我們採用 Google 表單進行註冊。")
+        # 替換成你的 Google 表單連結
+        st.link_button("👉 前往註冊表單", "https://forms.gle/你的表單網址")
+        st.caption("註冊完成後，請直接回到此處登入。")
+
+    with tab1:
+        user_input = st.text_input("帳號")
+        pass_input = st.text_input("密碼", type='password')
+        
+        if st.button("登入系統"):
+            if user_input and pass_input:
+                try:
+                    # 讀取試算表資料，ttl=0 確保抓到剛註冊的人
+                    df = conn_gs.read(ttl=0)
                     
-                    # 更新回 Google Sheets
-                    updated_df = pd.concat([df, new_user], ignore_index=True)
-                    conn_gs.update(data=updated_df)
-                    st.success("註冊成功！請切換至「登入」選單進入系統")
+                    # 檢查該帳號是否存在 (假設欄位名稱是 '帳號')
+                    # 我們抓取該帳號最後一次出現的紀錄 (避免重複註冊導致的問題)
+                    user_data = df[df['帳號'].astype(str) == str(user_input)]
+                    
+                    if not user_data.empty:
+                        # 檢查密碼 (假設欄位名稱是 '密碼')
+                        correct_password = user_data.iloc[-1]['密碼']
+                        
+                        if str(correct_password) == str(pass_input):
+                            st.session_state.logged_in = True
+                            st.session_state.username = user_input
+                            st.success("登入成功！頁面跳轉中...")
+                            st.rerun()
+                        else:
+                            st.error("密碼錯誤，請重新輸入")
+                    else:
+                        st.error("找不到此帳號，請先完成註冊")
+                except Exception as e:
+                    st.error("系統連線異常，請稍後再試")
+                    # 開發階段可以取消下面這行的註解，用來檢查欄位名稱是否正確
+                    # st.write("目前表格欄位：", df.columns.tolist()) 
             else:
                 st.warning("請輸入帳號與密碼")
-    else:
-        if st.button("登入"):
-            df = conn_gs.read(ttl=0)
-            # 驗證帳號與密碼
-            # 確保比對時型別一致
-            user_df = df[df['username'].astype(str) == str(user)]
-            
-            if not user_df.empty:
-                hashed_pw = user_df.iloc[0]['password']
-                if check_hashes(passwd, hashed_pw):
-                    st.session_state.logged_in = True
-                    st.session_state.username = user
-                    st.rerun()
-                else:
-                    st.error("密碼錯誤")
-            else:
-                st.error("帳號不存在，請先註冊")
-
 
 # --- 關鍵字雲生成邏輯 ---
 def generate_wordcloud(text):
