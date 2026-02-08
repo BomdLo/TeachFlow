@@ -15,18 +15,11 @@ import matplotlib.pyplot as plt
 from io import BytesIO
 import io
 import sys
+from streamlit_gsheets import GSheetsConnection
+# 建立連線
+conn = st.connection("gsheets", type=GSheetsConnection)
 
 
-# --- 1. 資料庫與安全性設定 ---
-def init_db():
-    conn = sqlite3.connect('teachflow.db')
-    c = conn.cursor()
-    c.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT)')
-    c.execute('''CREATE TABLE IF NOT EXISTS history 
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, 
-                  task_type TEXT, result TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-    conn.commit()
-    conn.close()
 
 
 def make_hashes(password):
@@ -37,7 +30,7 @@ def check_hashes(password, hashed_text):
     return make_hashes(password) == hashed_text
 
 
-init_db()
+
 cc = OpenCC('s2twp')
 
 
@@ -129,29 +122,49 @@ def login_ui():
     user = st.text_input("帳號")
     passwd = st.text_input("密碼", type='password')
 
+    # 建立連線
+    conn_gs = st.connection("gsheets", type=GSheetsConnection)
+
     if choice == "註冊":
         if st.button("創建帳號"):
-            conn = sqlite3.connect('teachflow.db')
-            c = conn.cursor()
-            try:
-                c.execute('INSERT INTO users VALUES (?,?)', (user, make_hashes(passwd)))
-                conn.commit()
-                st.success("註冊成功，請切換至登入")
-            except:
-                st.error("帳號已存在")
-            conn.close()
+            if user and passwd:
+                # 讀取現有用戶資料 (ttl=0 確保讀取最新)
+                df = conn_gs.read(ttl=0)
+                
+                # 檢查帳號是否已存在
+                if user in df['username'].values.astype(str):
+                    st.error("帳號已存在，請更換帳號名稱")
+                else:
+                    # 新增用戶資料
+                    new_user = pd.DataFrame([{
+                        "username": str(user),
+                        "password": make_hashes(passwd),
+                        "signup_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    }])
+                    
+                    # 更新回 Google Sheets
+                    updated_df = pd.concat([df, new_user], ignore_index=True)
+                    conn_gs.update(data=updated_df)
+                    st.success("註冊成功！請切換至「登入」選單進入系統")
+            else:
+                st.warning("請輸入帳號與密碼")
     else:
         if st.button("登入"):
-            conn = sqlite3.connect('teachflow.db')
-            c = conn.cursor()
-            c.execute('SELECT password FROM users WHERE username=?', (user,))
-            data = c.fetchone()
-            if data and check_hashes(passwd, data[0]):
-                st.session_state.logged_in = True
-                st.session_state.username = user
-                st.rerun()
+            df = conn_gs.read(ttl=0)
+            # 驗證帳號與密碼
+            # 確保比對時型別一致
+            user_df = df[df['username'].astype(str) == str(user)]
+            
+            if not user_df.empty:
+                hashed_pw = user_df.iloc[0]['password']
+                if check_hashes(passwd, hashed_pw):
+                    st.session_state.logged_in = True
+                    st.session_state.username = user
+                    st.rerun()
+                else:
+                    st.error("密碼錯誤")
             else:
-                st.error("密碼錯誤或帳號不存在")
+                st.error("帳號不存在，請先註冊")
 
 
 # --- 關鍵字雲生成邏輯 ---
