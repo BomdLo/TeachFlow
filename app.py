@@ -26,10 +26,15 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 # --- 初始化 Supabase ---
 @st.cache_resource
-def init_supabase() -> Client:
-    return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
-
-supabase = init_supabase()
+def init_supabase():
+    
+    try:
+        url = st.secrets["connections"]["supabase"]["SUPABASE_URL"]
+        key = st.secrets["connections"]["supabase"]["SUPABASE_KEY"]
+        return create_client(url, key)
+    except KeyError as e:
+        st.error(f"找不到 Key: {e}。請檢查 Secrets 階層是否正確。")
+        st.stop()
 
 # --- 修改後的 Auth 邏輯 ---
 def verify_user(username, password):
