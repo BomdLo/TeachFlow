@@ -19,11 +19,43 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
 import secrets
+from supabase import create_client, Client
 # 建立連線
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 
+# --- 初始化 Supabase ---
+@st.cache_resource
+def init_supabase() -> Client:
+    return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 
+supabase = init_supabase()
+
+# --- 修改後的 Auth 邏輯 ---
+def verify_user(username, password):
+    try:
+        res = supabase.table("users").select("password_hash").eq("username", username).execute()
+        if res.data:
+            stored_hash = res.data[0]['password_hash']
+            return check_hashes(password, stored_hash)
+        return False
+    except Exception as e:
+        st.error(f"DATABASE_ERROR: {e}")
+        return False
+
+# --- 修改後的 寫入紀錄 邏輯 ---
+def save_task_record(username, task_type, result):
+    data = {
+        "username": username,
+        "task_type": task_type,
+        "result": result
+    }
+    supabase.table("history").insert(data).execute()
+
+# --- 修改後的 讀取紀錄 邏輯 ---
+def load_user_history(username):
+    res = supabase.table("history").select("*").eq("username", username).order("timestamp", desc=True).limit(5).execute()
+    return res.data
 
 def make_hashes(password):
     # 產生一個隨機的「鹽」(Salt)，讓同樣的密碼產生不同的 Hash
@@ -196,27 +228,42 @@ def login_ui():
     # 1. 注入全域 CSS
     inject_custom_design()
     
-    # 2. 置中容器美化 (雖然禁止完美居中，但登入框通常需要收納感，我們讓它偏上)
+    # 2. 佈局調整
     st.markdown("<br><br>", unsafe_allow_html=True)
     
-    # 標題去 Emoji，改用系統標籤感
+    # 標題系統感強化
     st.title("TEACHFLOW_AUTH_GATEWAY")
-    st.caption("VERSION: 2.1.0_STABLE | REGION: TW_EDU")
+    st.caption("VERSION: 3.0.0_SUPABASE | REGION: TW_EDU")
     
-    # 頂部提示資訊
-    st.info("SYSTEM_INFO: 支援 PDF 考題解析、教材摘要與關鍵字矩陣分析。")
+    st.info("SYSTEM_INFO: 已遷移至 PostgreSQL 隔離架構，支援高併發存取。")
     
-    # 建立連線
-    conn_gs = st.connection("gsheets", type=GSheetsConnection)
+    # 初始化 Supabase (假設你已定義 init_supabase 函數)
+    supabase = init_supabase()
     
-    # 使用 Tabs，但標籤名改為純文字大寫
+    # 使用 Tabs
     tab1, tab2 = st.tabs(["SIGN_IN", "REGISTRATION"])
 
     with tab2:
         st.markdown("### ACCOUNT_REGISTRATION")
-        st.write("請先完成註冊表單，系統將於填寫後同步權限。")
-        # 移除 👉 圖示
-        st.link_button("OPEN_REGISTRATION_FORM", "https://docs.google.com/forms/d/e/1FAIpQLSdVXraSEhAp_rAuXyx5_PjtJTyBt9iut013SeSF_ndmgW0ALQ/viewform", use_container_width=True)
+        st.write("目前註冊由 Supabase 安全驗證層接管。")
+        with st.container(border=True):
+            reg_user = st.text_input("SET_ID_ACCOUNT", placeholder="欲註冊的帳號")
+            reg_pass = st.text_input("SET_ACCESS_PASSWORD", type='password', placeholder="欲設定的密碼")
+            if st.button("EXECUTE_REGISTRATION", use_container_width=True):
+                if reg_user and reg_pass:
+                    # 密碼雜湊處理
+                    hashed_pw = make_hashes(reg_pass)
+                    try:
+                        # 寫入 Supabase user 表單
+                        supabase.table("users").insert({
+                            "username": reg_user.strip(),
+                            "password_hash": hashed_pw
+                        }).execute()
+                        st.success("SUCCESS: 帳號已建立，請切換至登入頁面。")
+                    except Exception as e:
+                        st.error(f"REG_ERROR: 帳號可能已存在或系統異常")
+                else:
+                    st.warning("FIELD_REQUIRED: 請填寫完整資訊")
 
     with tab1:
         with st.container(border=True):
@@ -226,33 +273,26 @@ def login_ui():
             if st.button("VERIFY_AND_LOGIN", use_container_width=True):
                 if user_input and pass_input:
                     try:
-                        # 步驟 A: 先把 Google Forms 寫入的明文通通加密
-                        security_migration_sync(conn_gs)
-                        
-                        # 步驟 B: 這裡很重要！加密完後要「重新讀取」最新的 DataFrame
-                        df = conn_gs.read(ttl=0) 
-                        df.columns = [c.strip() for c in df.columns]
-                        
-                        # 步驟 C: 尋找使用者（加上 strip 確保帳號比對正確）
+                        # 步驟 A: 直接從 Supabase 撈取該使用者的雜湊密碼 (不再讀取全表)
                         search_id = str(user_input).strip()
-                        user_data = df[df['帳號'].astype(str).str.strip() == search_id]
+                        response = supabase.table("users").select("password_hash").eq("username", search_id).execute()
                         
-                        if not user_data.empty:
-                            stored_password = str(user_data.iloc[-1]['密碼']).strip()
-                            st.write(f"DEBUG: 輸入為 {pass_input}, 資料庫存儲為 {stored_password}")
+                        if response.data:
+                            stored_hash = response.data[0]['password_hash']
                             
-                            # 步驟 D: 比對（密碼也要 strip，防止輸入時多按空白）
-                            if check_hashes(pass_input.strip(), stored_password):
+                            # 步驟 B: 安全比對
+                            if check_hashes(pass_input.strip(), stored_hash):
                                 st.session_state.logged_in = True
-                                st.session_state.username = user_input
+                                st.session_state.username = search_id
+                                st.success("AUTH_SUCCESS: 正在跳轉工作站...")
                                 st.rerun()
                             else:
-                                st.error("AUTH_ERROR: 憑證無效")
+                                st.error("AUTH_ERROR: 密碼驗證失敗")
                         else:
-                            st.error("AUTH_ERROR: 憑證無效")
+                            st.error("AUTH_ERROR: 找不到該帳號")
                             
                     except Exception as e:
-                        st.error(f"SYSTEM_ERROR: {str(e)}") # 暫時顯示錯誤訊息來 debug
+                        st.error(f"SYSTEM_ERROR: 連線資料庫失敗")
                 else:
                     st.warning("FIELD_REQUIRED: 帳號密碼不可為空")
             # --- 關鍵字雲生成邏輯 ---
