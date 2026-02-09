@@ -224,32 +224,24 @@ def login_ui():
             if st.button("VERIFY_AND_LOGIN", use_container_width=True):
                 if user_input and pass_input:
                     try:
-                        # 建立連線 (確保 conn_gs 已定義)
-                        conn_gs = st.connection("gsheets", type=GSheetsConnection)
+                        # 步驟 A: 先把 Google Forms 寫入的明文通通加密
+                        security_migration_sync(conn_gs)
                         
-                        # --- 0. 執行安全遷移並獲取最新數據 ---
-                        # 建議將 security_migration_sync 修改為回傳 df，減少一次 API 讀取
-                        security_migration_sync(conn_gs) 
-                        
-                        # --- 1. 讀取與驗證 ---
-                        df = conn_gs.read(ttl=0)
+                        # 步驟 B: 這裡很重要！加密完後要「重新讀取」最新的 DataFrame
+                        df = conn_gs.read(ttl=0) 
                         df.columns = [c.strip() for c in df.columns]
                         
-                        # 篩選使用者 (加上對帳號的大小寫敏感度處理)
-                        user_data = df[df['帳號'].astype(str).str.strip() == str(user_input).strip()]
+                        # 步驟 C: 尋找使用者（加上 strip 確保帳號比對正確）
+                        search_id = str(user_input).strip()
+                        user_data = df[df['帳號'].astype(str).str.strip() == search_id]
                         
                         if not user_data.empty:
-                            # 取得最後一筆記錄 (避免使用者重複提交 Forms 造成的衝突)
                             stored_password = str(user_data.iloc[-1]['密碼']).strip()
                             
-                            # 安全比對
-                            if check_hashes(pass_input, stored_password):
-                                # 登入成功處理
+                            # 步驟 D: 比對（密碼也要 strip，防止輸入時多按空白）
+                            if check_hashes(pass_input.strip(), stored_password):
                                 st.session_state.logged_in = True
                                 st.session_state.username = user_input
-                                st.toast("AUTH_GRANTED: 歡迎回來")
-                                
-                                # 延遲一下下讓使用者看到成功訊息，然後重啟
                                 st.rerun()
                             else:
                                 st.error("AUTH_ERROR: 憑證無效")
@@ -257,8 +249,7 @@ def login_ui():
                             st.error("AUTH_ERROR: 憑證無效")
                             
                     except Exception as e:
-                        # 開發期間可以 print(e) 到後台，但前端保持模糊錯誤訊息
-                        st.error("SYSTEM_ERROR: 無法存取驗證伺服器")
+                        st.error(f"SYSTEM_ERROR: {str(e)}") # 暫時顯示錯誤訊息來 debug
                 else:
                     st.warning("FIELD_REQUIRED: 帳號密碼不可為空")
             # --- 關鍵字雲生成邏輯 ---
