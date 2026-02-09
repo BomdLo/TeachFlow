@@ -338,13 +338,13 @@ def main_app():
     # 注入視覺設計
     inject_custom_design()
     
-    # 建立連線
-    conn_gs = st.connection("gsheets", type=GSheetsConnection)
+    # 初始化 Supabase 用戶端 (確保 init_supabase 已定義)
+    supabase = init_supabase()
 
-    st.title("TEACHFLOW_WORKSPACE_V2")
-    st.caption(f"ACTIVE_USER: {st.session_state.username} | STATUS: ONLINE")
+    st.title("TEACHFLOW_WORKSPACE_V3")
+    st.caption(f"ACTIVE_USER: {st.session_state.username} | DB_ENGINE: POSTGRESQL (SUPABASE)")
 
-    # --- 1. 側邊欄：從 GSheets 讀取紀錄 ---
+    # --- 1. 側邊欄：從 Supabase 讀取紀錄 ---
     with st.sidebar:
         st.markdown("### SYSTEM_CONTROL")
         model_name = st.selectbox("MODEL_SELECT", ["llama-3.3-70b", "deepseek-r1:7b"])
@@ -356,21 +356,27 @@ def main_app():
         st.markdown("### DATA_HISTORY")
         
         try:
-            df_hist = conn_gs.read(worksheet="history", ttl=0)
-            if not df_hist.empty:
-                user_hist = df_hist[df_hist['username'].astype(str) == str(st.session_state.username)]
-                user_hist = user_hist.tail(5).iloc[::-1]
-                
-                for index, row in user_hist.iterrows():
-                    time_label = str(row['timestamp'])[5:16]
-                    if st.button(f"REC_{time_label} | {row['task_type']}", key=f"hist_{index}", use_container_width=True):
+            # 💡 核心優化：直接從 Supabase 查詢該使用者的前 5 筆紀錄
+            response = supabase.table("history") \
+                .select("*") \
+                .eq("username", str(st.session_state.username)) \
+                .order("timestamp", desc=True) \
+                .limit(5) \
+                .execute()
+            
+            records = response.data
+            if records:
+                for i, row in enumerate(records):
+                    # 格式化時間標籤
+                    time_label = row['timestamp'][5:16].replace('T', ' ')
+                    if st.button(f"REC_{time_label} | {row['task_type']}", key=f"hist_{i}", use_container_width=True):
                         st.session_state.quiz_results = row['result']
                         st.session_state.display_task = row['task_type']
                         st.rerun()
             else:
                 st.caption("NO_RECORDS_AVAILABLE")
         except Exception as e:
-            st.caption("DATABASE_SYNC_PENDING")
+            st.caption("DATABASE_CONNECTION_PENDING")
 
     # --- 2. 主畫面佈局 ---
     col_meta, col_workspace = st.columns([1, 2.5], gap="large")
@@ -394,32 +400,19 @@ def main_app():
                     processed = re.sub(r'<think>.*?</think>', '', processed, flags=re.DOTALL)
                     processed = re.sub(r'```json|```', '', processed)
                     
-                    # --- 寫入 Google Sheets 邏輯 ---
-                    # --- 寫入 Google Sheets 核心修正 ---
-                    new_row = pd.DataFrame([{
-                        "username": st.session_state.username,
-                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "task_type": task,
-                        "result": processed
-                    }])
-                    
+                    # --- 💡 寫入 Supabase 邏輯 (取代原本複雜的 pd.concat) ---
                     try:
-                        # 嘗試讀取
-                        existing_df = conn_gs.read(worksheet="history", ttl=0)
-                        
-                        # 如果讀取成功（代表分頁存在）
-                        if existing_df is not None:
-                            existing_df = existing_df.dropna(how='all')
-                            updated_df = pd.concat([existing_df, new_row], ignore_index=True)
-                            conn_gs.update(worksheet="history", data=updated_df)
-                            st.toast("✅ 紀錄已同步至雲端")
-                        
+                        new_data = {
+                            "username": st.session_state.username,
+                            "task_type": task,
+                            "result": processed
+                            # timestamp 由 Supabase 自動生成 (DEFAULT now())
+                        }
+                        supabase.table("history").insert(new_data).execute()
+                        st.toast("✅ 紀錄已同步至 Supabase")
                     except Exception as e:
-                        # 捕捉到錯誤（通常是 WorksheetNotFound）
-                        st.error("⚠️ 雲端同步失敗：找不到名為 'history' 的分頁")
-                        st.info("💡 請至 Google Sheet 左下角點擊「+」新增一個分頁，並重新命名為 history")
-    
-   
+                        st.error(f"SUPABASE_SYNC_ERROR: {str(e)}")
+                    
                     st.session_state.quiz_results = processed
                     st.session_state.display_task = task
                     st.rerun()
@@ -440,17 +433,21 @@ def main_app():
             if st.session_state.display_task == "生成考題":
                 json_match = re.search(r'\[.*\]', res, re.DOTALL)
                 if json_match:
-                    quiz_data = json.loads(json_match.group())
-                    for i, q in enumerate(quiz_data):
-                        with st.container(border=True):
-                            st.markdown(f"**Q{i + 1}: {q['question']}**")
-                            st.radio("OPTIONS", q['options'], key=f"q_{i}_{hash(res)}", label_visibility="collapsed")
-                            with st.expander("VIEW_LOGIC"):
-                                st.markdown(f"**CORRECT:** {q['options'][q.get('answer', 0)]}")
-                                if 'explanation' in q:
-                                    st.caption(f"LOGIC: {q['explanation']}")
-                    
-                    st.download_button("DOWNLOAD_DOCX", create_docx(quiz_data), "exam.docx", use_container_width=True)
+                    try:
+                        quiz_data = json.loads(json_match.group())
+                        for i, q in enumerate(quiz_data):
+                            with st.container(border=True):
+                                st.markdown(f"**Q{i + 1}: {q['question']}**")
+                                st.radio("OPTIONS", q['options'], key=f"q_{i}_{hash(res)}", label_visibility="collapsed")
+                                with st.expander("VIEW_LOGIC"):
+                                    st.markdown(f"**CORRECT:** {q['options'][q.get('answer', 0)]}")
+                                    if 'explanation' in q:
+                                        st.caption(f"LOGIC: {q['explanation']}")
+                        
+                        st.download_button("DOWNLOAD_DOCX", create_docx(quiz_data), "exam.docx", use_container_width=True)
+                    except Exception as e:
+                        st.error("JSON_PARSE_ERROR: AI 回傳格式異常")
+                        st.text_area("RAW_DATA", res, height=200)
                 else:
                     st.text_area("RAW_OUTPUT", res, height=400)
             else:
