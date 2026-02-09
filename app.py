@@ -221,9 +221,13 @@ def login_ui():
             user_input = st.text_input("ID_ACCOUNT", placeholder="輸入註冊帳號")
             pass_input = st.text_input("ACCESS_PASSWORD", type='password', placeholder="輸入安全密碼")
             
-            if st.button("VERIFY_AND_LOGIN", use_container_width=True):
+           if st.button("VERIFY_AND_LOGIN", use_container_width=True):
                 if user_input and pass_input:
                     try:
+                        # --- 0. 先執行安全遷移 (將 Forms 的明文轉為 Hash) ---
+                        security_migration_sync(conn_gs)
+                        
+                        # --- 1. 讀取與驗證 ---
                         df = conn_gs.read(ttl=0)
                         df.columns = [c.strip() for c in df.columns]
                         
@@ -233,23 +237,21 @@ def login_ui():
                         if not user_data.empty:
                             stored_password = str(user_data.iloc[-1]['密碼']).strip()
                             
-                            # --- 關鍵修正：使用安全比對函數 ---
-                            # 如果你的資料庫已經手動清理成 PBKDF2 格式，就用 check_hashes
+                            # 使用你定義的 check_hashes 進行安全比對
                             if check_hashes(pass_input, stored_password):
                                 st.session_state.logged_in = True
                                 st.session_state.username = user_input
-                                st.success("AUTH_SUCCESS: 驗證通過")
+                                st.toast("AUTH_GRANTED")
                                 st.rerun()
                             else:
-                                st.error("AUTH_ERROR: 憑證無效") # 模糊化錯誤訊息是資安實務
+                                st.error("AUTH_ERROR: 憑證無效")
                         else:
                             st.error("AUTH_ERROR: 憑證無效")
                             
                     except Exception as e:
-                        st.error("SYSTEM_ERROR: 安全通道建立失敗")
+                        st.error("SYSTEM_ERROR: 無法存取驗證伺服器")
                 else:
                     st.warning("FIELD_REQUIRED: 帳號密碼不可為空")
-
 # --- 關鍵字雲生成邏輯 ---
 def generate_wordcloud(text):
     # 1. 斷詞處理
