@@ -35,11 +35,13 @@ def make_hashes(password):
         salt.encode('utf-8'), 
         600000
     )
+    
     # 將鹽與雜湊值存在一起，格式如：salt:hash
     return f"{salt}:{key.hex()}"
 
 def check_hashes(password, hashed_storage):
     try:
+        
         # 分離出儲存的鹽與雜湊值
         salt, stored_key = hashed_storage.split(':')
         # 用同樣的鹽對輸入密碼進行計算
@@ -237,6 +239,7 @@ def login_ui():
                         
                         if not user_data.empty:
                             stored_password = str(user_data.iloc[-1]['密碼']).strip()
+                            st.write(f"DEBUG: 輸入為 {pass_input}, 資料庫存儲為 {stored_password}")
                             
                             # 步驟 D: 比對（密碼也要 strip，防止輸入時多按空白）
                             if check_hashes(pass_input.strip(), stored_password):
