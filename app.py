@@ -165,7 +165,30 @@ def create_docx(quiz_data):
 
 # --- 5. 介面邏輯 ---
 st.set_page_config(page_title="TeachFlow AI", layout="wide")
-
+def security_migration_sync(conn_gs):
+    """自動偵測並加密 Google Sheets 中的明文密碼"""
+    try:
+        df = conn_gs.read(ttl=0)
+        df.columns = [c.strip() for c in df.columns]
+        
+        updated = False
+        for index, row in df.iterrows():
+            pwd = str(row['密碼']).strip()
+            
+            # 判斷是否為明文：如果沒有 ":" 分隔符號，代表它是 Google Forms 直接寫入的明文
+            if ":" not in pwd:
+                hashed_pwd = make_hashes(pwd)
+                df.at[index, '密碼'] = hashed_pwd
+                updated = True
+        
+        if updated:
+            # 寫回 Google Sheets，完成自動加密
+            conn_gs.update(data=df)
+            st.toast("SECURITY_SYNC: 已自動加密新註冊數據")
+            
+    except Exception as e:
+        # 靜默失敗，不影響登入流程
+        pass
 
 def login_ui():
     # 1. 注入全域 CSS
@@ -194,38 +217,38 @@ def login_ui():
         st.link_button("OPEN_REGISTRATION_FORM", "https://docs.google.com/forms/d/e/1FAIpQLSdVXraSEhAp_rAuXyx5_PjtJTyBt9iut013SeSF_ndmgW0ALQ/viewform", use_container_width=True)
 
     with tab1:
-        # 使用容器包裝輸入框，增加視覺層次
         with st.container(border=True):
             user_input = st.text_input("ID_ACCOUNT", placeholder="輸入註冊帳號")
             pass_input = st.text_input("ACCESS_PASSWORD", type='password', placeholder="輸入安全密碼")
             
-            # 按鈕文字改為大寫
             if st.button("VERIFY_AND_LOGIN", use_container_width=True):
                 if user_input and pass_input:
                     try:
-                        # 讀取試算表
                         df = conn_gs.read(ttl=0)
                         df.columns = [c.strip() for c in df.columns]
                         
+                        # 篩選使用者
                         user_data = df[df['帳號'].astype(str).str.strip() == str(user_input).strip()]
                         
                         if not user_data.empty:
-                            correct_password = user_data.iloc[-1]['密碼']
+                            stored_password = str(user_data.iloc[-1]['密碼']).strip()
                             
-                            if str(correct_password).strip() == str(pass_input).strip():
+                            # --- 關鍵修正：使用安全比對函數 ---
+                            # 如果你的資料庫已經手動清理成 PBKDF2 格式，就用 check_hashes
+                            if check_hashes(pass_input, stored_password):
                                 st.session_state.logged_in = True
                                 st.session_state.username = user_input
-                                st.success("AUTH_SUCCESS: 正在載入工作站...")
+                                st.success("AUTH_SUCCESS: 驗證通過")
                                 st.rerun()
                             else:
-                                st.error("AUTH_ERROR: 密碼不匹配")
+                                st.error("AUTH_ERROR: 憑證無效") # 模糊化錯誤訊息是資安實務
                         else:
-                            st.error("AUTH_ERROR: 找不到使用者紀錄")
+                            st.error("AUTH_ERROR: 憑證無效")
                             
                     except Exception as e:
-                        st.error("SYSTEM_ERROR: 無法存取驗證伺服器")
+                        st.error("SYSTEM_ERROR: 安全通道建立失敗")
                 else:
-                    st.warning("FIELD_REQUIRED: 請填寫所有必填欄位")
+                    st.warning("FIELD_REQUIRED: 帳號密碼不可為空")
 
 # --- 關鍵字雲生成邏輯 ---
 def generate_wordcloud(text):
