@@ -18,6 +18,7 @@ import sys
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
+import secrets
 # 建立連線
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -25,11 +26,32 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 
 def make_hashes(password):
-    return hashlib.sha256(str.encode(password)).hexdigest()
+    # 產生一個隨機的「鹽」(Salt)，讓同樣的密碼產生不同的 Hash
+    salt = secrets.token_hex(16)
+    # 使用 PBKDF2 演算法，並進行 600,000 次疊代，大幅增加暴力破解難度
+    key = hashlib.pbkdf2_hmac(
+        'sha256', 
+        password.encode('utf-8'), 
+        salt.encode('utf-8'), 
+        600000
+    )
+    # 將鹽與雜湊值存在一起，格式如：salt:hash
+    return f"{salt}:{key.hex()}"
 
-
-def check_hashes(password, hashed_text):
-    return make_hashes(password) == hashed_text
+def check_hashes(password, hashed_storage):
+    try:
+        # 分離出儲存的鹽與雜湊值
+        salt, stored_key = hashed_storage.split(':')
+        # 用同樣的鹽對輸入密碼進行計算
+        new_key = hashlib.pbkdf2_hmac(
+            'sha256', 
+            password.encode('utf-8'), 
+            salt.encode('utf-8'), 
+            600000
+        )
+        return new_key.hex() == stored_key
+    except Exception:
+        return False
 
 
 
